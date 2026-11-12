@@ -698,7 +698,8 @@ static uint32_t DAP_JTAG_Format(const uint8_t *request, uint8_t *response) {
   format = *request;
 
   if ((DAP_Data.debug_port == DAP_PORT_SWD) ||
-      ((format > DAP_JTAG_FORMAT_OSCAN2) && (format != DAP_JTAG_FORMAT_OSCAN5))) {
+      ((format > DAP_JTAG_FORMAT_OSCAN2) && (format != DAP_JTAG_FORMAT_OSCAN5) &&
+       (format != DAP_JTAG_FORMAT_OSCAN6))) {
     *response = DAP_ERROR;
     return ((1U << 16) | 1U);
   }

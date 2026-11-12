@@ -439,6 +439,7 @@ static const uint8_t TapNext[16][2] = {
 
 // TAP State
 static uint8_t  TapState = CJTAG_TAP_IDLE;  /* TAP state after frames sent */
+static uint8_t  TapShift = 0U;              /* Last frame in Shift-DR/IR */
 
 
 // Generate cJTAG Frame at slow clock (packets set by scan format and TAP state)
@@ -449,16 +450,20 @@ static uint32_t OScan_Frame (uint32_t tms, uint32_t tdi) {
   uint32_t format;
   uint32_t state;
   uint32_t shift;
+  uint32_t pad;
   uint32_t tdo;
 
   format = DAP_Data.jtag_format;
   state  = TapState;
   shift  = (state == CJTAG_TAP_SHIFT_DR) || (state == CJTAG_TAP_SHIFT_IR);
+  pad    = (format == DAP_JTAG_FORMAT_OSCAN6) && shift && (TapShift == 0U);
   TapState = TapNext[state][tms & 1U];
+  TapShift = (uint8_t)shift;
 
   // Hold time after previous frame
   CJTAG_QUARTER_DELAY();
-  if ((shift == 0U) && (format == DAP_JTAG_FORMAT_OSCAN2)) {
+  if ((shift == 0U) &&
+      ((format == DAP_JTAG_FORMAT_OSCAN2) || (format == DAP_JTAG_FORMAT_OSCAN6))) {
     // TMS packet
     PIN_SWDIO_OUT(tms & 1U);
     CJTAG_QUARTER_DELAY();
@@ -467,14 +472,15 @@ static uint32_t OScan_Frame (uint32_t tms, uint32_t tdi) {
     PIN_TCK_CLR();
     return (1U);
   }
-  if ((shift == 0U) || (format != DAP_JTAG_FORMAT_OSCAN5)) {
+  if ((shift == 0U) ||
+      ((format != DAP_JTAG_FORMAT_OSCAN5) && (format != DAP_JTAG_FORMAT_OSCAN6))) {
     return (OScan1_Frame(tms, tdi));
   }
 
   // nTDI packet, with TMS=1 as EOT escape (two TMSC edges while TCKC is high)
   PIN_SWDIO_OUT((tdi & 1U) ^ 1U);
   PIN_DELAY();
-  if (((tms & 1U) == 0U)) {
+  if (((tms & 1U) == 0U) && (pad == 0U)) {
     PIN_SWDIO_OUT_DISABLE();                // Release TMSC (14.2.3)
   }
   PIN_TCK_SET();
@@ -485,9 +491,20 @@ static uint32_t OScan_Frame (uint32_t tms, uint32_t tdi) {
     CJTAG_PERIOD_DELAY();
     PIN_SWDIO_OUT((tdi & 1U) ^ 1U);
     CJTAG_QUARTER_DELAY();
-    PIN_SWDIO_OUT_DISABLE();                // Release TMSC (14.2.3)
+    if (pad == 0U) {
+      PIN_SWDIO_OUT_DISABLE();              // Release TMSC (14.2.3)
+    }
     CJTAG_PERIOD_DELAY();
   } else {
+    PIN_DELAY();
+  }
+
+  if (pad != 0U) {
+    // PAD packet: TMSC released in its low phase (25.4.1.4)
+    PIN_TCK_CLR();
+    PIN_DELAY();
+    PIN_SWDIO_OUT_DISABLE();
+    PIN_TCK_SET();
     PIN_DELAY();
   }
 
