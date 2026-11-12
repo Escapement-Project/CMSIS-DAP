@@ -79,7 +79,7 @@ This information includes:
 /// Indicate that cJTAG (IEEE 1149.7) scan formats are available in JTAG mode at the Debug Port.
 /// Requires DAP_JTAG.
 /// This information is returned by the command \ref DAP_Info as part of <b>Capabilities</b>.
-#define DAP_CJTAG               0               ///< cJTAG: 1 = available, 0 = not available.
+#define DAP_CJTAG               1               ///< cJTAG: 1 = available, 0 = not available.
 
 /// Configure maximum number of JTAG devices on the scan chain connected to the Debug Access Port.
 /// This setting impacts the RAM requirements of the Debug Unit. Valid range is 1 .. 255.
@@ -375,6 +375,64 @@ __STATIC_INLINE void PORT_SWD_SETUP (void) {
  
   // TDI
   DBGIF_TDI_GPIO->DIRCLR[DBGIF_TDI_PORT] = (1U << DBGIF_TDI_PIN);
+}
+
+/** Setup cJTAG I/O pins: TCK, TMS, TDI, TDO, nTRST, and nRESET.
+Configures the DAP Hardware I/O pins when \ref DAP_Connect starts in a cJTAG scan format:
+ - TCK to output mode and set to low level, before TMS (a TMS edge while TCK is high counts toward an escape).
+ - TMS, nTRST, nRESET to output mode and set to high level.
+ - TDI to HighZ mode (pin is unused in cJTAG scan formats).
+ - TDO to input mode.
+*/
+__STATIC_INLINE void PORT_CJTAG_SETUP (void) {
+
+  // TCK
+  DBGIF_TCK_SWCLK_GPIO->CLR[DBGIF_TCK_SWCLK_PORT]    = (1U << DBGIF_TCK_SWCLK_PIN);
+  DBGIF_TCK_SWCLK_GPIO->DIRSET[DBGIF_TCK_SWCLK_PORT] = (1U << DBGIF_TCK_SWCLK_PIN);
+
+  // TMS
+  DBGIF_TMS_SWDIO_GPIO->SET[DBGIF_TMS_SWDIO_PORT]           = (1U << DBGIF_TMS_SWDIO_PIN);
+  DBGIF_TMS_SWDIO_GPIO->DIRSET[DBGIF_TMS_SWDIO_PORT]        = (1U << DBGIF_TMS_SWDIO_PIN);
+  DBGIF_TMS_SWDIO_TXEN_GPIO->SET[DBGIF_TMS_SWDIO_TXEN_PORT] = (1U << DBGIF_TMS_SWDIO_TXEN_PIN);
+
+  // nRESET
+  DBGIF_RESET_GPIO->SET[DBGIF_RESET_PORT]           = (1U << DBGIF_RESET_PIN);
+  DBGIF_RESET_GPIO->DIRSET[DBGIF_RESET_PORT]        = (1U << DBGIF_RESET_PIN);
+  DBGIF_RESET_TXEN_GPIO->SET[DBGIF_RESET_TXEN_PORT] = (1U << DBGIF_RESET_TXEN_PIN);
+
+  // TDI
+  DBGIF_TDI_GPIO->DIRCLR[DBGIF_TDI_PORT] = (1U << DBGIF_TDI_PIN);
+
+  // TDO
+  GPIO->DIRCLR[PIN_SWO_TDO_PORT] = (1U << PIN_SWO_TDO_PIN);
+}
+
+/** Enter cJTAG scan format on a JTAG connection.
+Configures the DAP Hardware I/O pins for a cJTAG scan format:
+ - TCK set to low level (a falling edge where TCK rests high).
+ - TDI to HighZ mode (pin is unused in cJTAG scan formats).
+ - TMS, nTRST, and nRESET left as they are.
+*/
+__STATIC_INLINE void PORT_CJTAG_ENTER (void) {
+
+  // TCK
+  DBGIF_TCK_SWCLK_GPIO->CLR[DBGIF_TCK_SWCLK_PORT] = (1U << DBGIF_TCK_SWCLK_PIN);
+
+  // TDI
+  DBGIF_TDI_GPIO->DIRCLR[DBGIF_TDI_PORT] = (1U << DBGIF_TDI_PIN);
+}
+
+/** Exit cJTAG scan format on a JTAG connection.
+Configures the DAP Hardware I/O pins back for JTAG mode:
+ - TDI to output mode and set to high level.
+ - TCK left at low level (a rising edge would clock the TAP).
+ - nTRST and nRESET left as they are.
+*/
+__STATIC_INLINE void PORT_CJTAG_EXIT (void) {
+
+  // TDI
+  DBGIF_TDI_GPIO->SET[DBGIF_TDI_PORT]    = (1U << DBGIF_TDI_PIN);
+  DBGIF_TDI_GPIO->DIRSET[DBGIF_TDI_PORT] = (1U << DBGIF_TDI_PIN);
 }
 
 /** Disable JTAG/SWD I/O Pins.
