@@ -71,6 +71,11 @@ This information includes:
 /// This information is returned by the command \ref DAP_Info as part of <b>Capabilities</b>.
 #define DAP_JTAG                1               ///< JTAG Mode: 1 = available, 0 = not available.
 
+/// Indicate that cJTAG (IEEE 1149.7) scan formats are available in JTAG mode at the Debug Port.
+/// Requires DAP_JTAG.
+/// This information is returned by the command \ref DAP_Info as part of <b>Capabilities</b>.
+#define DAP_CJTAG               0               ///< cJTAG: 1 = available, 0 = not available.
+
 /// Configure maximum number of JTAG devices on the scan chain connected to the Debug Access Port.
 /// This setting impacts the RAM requirements of the Debug Unit. Valid range is 1 .. 255.
 #define DAP_JTAG_DEV_CNT        8U              ///< Maximum number of JTAG devices on scan chain.
@@ -272,14 +277,14 @@ Standard I/O Pins of the CMSIS-DAP Hardware Debug Port support standard JTAG mod
 and Serial Wire Debug (SWD) mode. In SWD mode only 2 pins are required to implement the debug
 interface of a device. The following I/O Pins are provided:
 
-JTAG I/O Pin                 | SWD I/O Pin          | CMSIS-DAP Hardware pin mode
----------------------------- | -------------------- | ---------------------------------------------
-TCK: Test Clock              | SWCLK: Clock         | Output Push/Pull
-TMS: Test Mode Select        | SWDIO: Data I/O      | Output Push/Pull; Input (for receiving data)
-TDI: Test Data Input         |                      | Output Push/Pull
-TDO: Test Data Output        |                      | Input
-nTRST: Test Reset (optional) |                      | Output Open Drain with pull-up resistor
-nRESET: Device Reset         | nRESET: Device Reset | Output Open Drain with pull-up resistor
+JTAG I/O Pin                 | SWD I/O Pin          | cJTAG I/O Pin        | CMSIS-DAP Hardware pin mode
+---------------------------- | -------------------- | -------------------- | ---------------------------------------------
+TCK: Test Clock              | SWCLK: Clock         | TCKC: Clock          | Output Push/Pull
+TMS: Test Mode Select        | SWDIO: Data I/O      | TMSC: Data I/O       | Output Push/Pull; Input (for receiving data)
+TDI: Test Data Input         |                      |                      | Output Push/Pull
+TDO: Test Data Output        |                      |                      | Input
+nTRST: Test Reset (optional) |                      |                      | Output Open Drain with pull-up resistor
+nRESET: Device Reset         | nRESET: Device Reset | nRESET: Device Reset | Output Open Drain with pull-up resistor
 
 
 DAP Hardware I/O Pin Access Functions
@@ -287,7 +292,8 @@ DAP Hardware I/O Pin Access Functions
 The various I/O Pins are accessed by functions that implement the Read, Write, Set, or Clear to
 these I/O Pins.
 
-For the SWDIO I/O Pin there are additional functions that are called in SWD I/O mode only.
+For the SWDIO I/O Pin there are additional functions that are called in SWD I/O mode and for
+TMSC in cJTAG scan formats.
 This functions are provided to achieve faster I/O that is possible with some advanced GPIO
 peripherals that can independently write/read a single I/O pin without affecting any other pins
 of the same I/O port. The following SWDIO I/O Pin functions are provided:
@@ -315,6 +321,37 @@ Configures the DAP Hardware I/O pins for Serial Wire Debug (SWD) mode:
  - TDI, nTRST to HighZ mode (pins are unused in SWD mode).
 */
 __STATIC_INLINE void PORT_SWD_SETUP (void) {
+  ;
+}
+
+/** Setup cJTAG I/O pins: TCK, TMS, TDI, TDO, nTRST, and nRESET.
+Configures the DAP Hardware I/O pins when \ref DAP_Connect starts in a cJTAG scan format:
+ - TCK to output mode and set to low level, before TMS (a TMS edge while TCK is high counts toward an escape).
+ - TMS, nTRST, nRESET to output mode and set to high level.
+ - TDI to HighZ mode (pin is unused in cJTAG scan formats).
+ - TDO to input mode.
+*/
+__STATIC_INLINE void PORT_CJTAG_SETUP (void) {
+  ;
+}
+
+/** Enter cJTAG scan format on a JTAG connection.
+Configures the DAP Hardware I/O pins for a cJTAG scan format:
+ - TCK set to low level (a falling edge where TCK rests high).
+ - TDI to HighZ mode (pin is unused in cJTAG scan formats).
+ - TMS, nTRST, and nRESET left as they are.
+*/
+__STATIC_INLINE void PORT_CJTAG_ENTER (void) {
+  ;
+}
+
+/** Exit cJTAG scan format on a JTAG connection.
+Configures the DAP Hardware I/O pins back for JTAG mode:
+ - TDI to output mode and set to high level.
+ - TCK left at low level (a rising edge would clock the TAP).
+ - nTRST and nRESET left as they are.
+*/
+__STATIC_INLINE void PORT_CJTAG_EXIT (void) {
   ;
 }
 
@@ -374,21 +411,21 @@ __STATIC_FORCEINLINE void     PIN_SWDIO_TMS_CLR (void) {
   ;
 }
 
-/** SWDIO I/O pin: Get Input (used in SWD mode only).
+/** SWDIO I/O pin: Get Input (used in SWD mode and cJTAG scan formats).
 \return Current status of the SWDIO DAP hardware I/O pin.
 */
 __STATIC_FORCEINLINE uint32_t PIN_SWDIO_IN      (void) {
   return (0U);
 }
 
-/** SWDIO I/O pin: Set Output (used in SWD mode only).
+/** SWDIO I/O pin: Set Output (used in SWD mode and cJTAG scan formats).
 \param bit Output value for the SWDIO DAP hardware I/O pin.
 */
 __STATIC_FORCEINLINE void     PIN_SWDIO_OUT     (uint32_t bit) {
   ;
 }
 
-/** SWDIO I/O pin: Switch to Output mode (used in SWD mode only).
+/** SWDIO I/O pin: Switch to Output mode (used in SWD mode and cJTAG scan formats).
 Configure the SWDIO DAP hardware I/O pin to output mode. This function is
 called prior \ref PIN_SWDIO_OUT function calls.
 */
@@ -396,7 +433,7 @@ __STATIC_FORCEINLINE void     PIN_SWDIO_OUT_ENABLE  (void) {
   ;
 }
 
-/** SWDIO I/O pin: Switch to Input mode (used in SWD mode only).
+/** SWDIO I/O pin: Switch to Input mode (used in SWD mode and cJTAG scan formats).
 Configure the SWDIO DAP hardware I/O pin to input mode. This function is
 called prior \ref PIN_SWDIO_IN function calls.
 */

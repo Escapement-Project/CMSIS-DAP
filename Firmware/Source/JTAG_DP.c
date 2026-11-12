@@ -351,12 +351,184 @@ JTAG_ReadIDCodeFunction(Slow)
 JTAG_WriteAbortFunction(Slow)
 
 
+#if (DAP_CJTAG != 0)
+
+// cJTAG (IEEE 1149.7) scan formats on TCKC (SWCLK/TCK) and TMSC (SWDIO/TMS).
+// After a falling edge that ends a bit the probe drives, TMSC changes a quarter
+// TCKC period later: hold time for a target sampling on the falling edge, setup
+// time for the rising edge.
+
+// Quarter TCKC period (at least)
+#define CJTAG_QUARTER_DELAY() PIN_DELAY_SLOW((DAP_Data.clock_delay / 2U) + 1U)
+
+// TCKC period (at least)
+#define CJTAG_PERIOD_DELAY()  PIN_DELAY_SLOW((DAP_Data.clock_delay * 2U) + 2U)
+
+// Frame State
+static uint32_t FrameTMS = 1U;              /* TMS of next frame */
+static uint32_t FrameTDI = 1U;              /* TDI of next frame */
+
+
+// Generate OScan1 Frame: nTDI, TMS and TDO packets
+//   tms:    TMS value
+//   tdi:    TDI value
+//   return: TDO value
+static uint32_t OScan1_Frame (uint32_t tms, uint32_t tdi) {
+  uint32_t tdo;
+
+  PIN_SWDIO_OUT((tdi & 1U) ^ 1U);           // nTDI
+  PIN_DELAY();
+  PIN_TCK_SET();
+  PIN_DELAY();
+  PIN_TCK_CLR();
+  CJTAG_QUARTER_DELAY();
+  PIN_SWDIO_OUT(tms & 1U);                  // TMS
+  CJTAG_QUARTER_DELAY();
+  PIN_SWDIO_OUT_DISABLE();                  // Release TMSC (14.2.3)
+  PIN_TCK_SET();
+  PIN_DELAY();
+  PIN_TCK_CLR();                            // TDO
+  PIN_DELAY();
+  tdo = PIN_SWDIO_IN();
+  PIN_TCK_SET();
+  PIN_DELAY();
+  PIN_TCK_CLR();
+  PIN_SWDIO_OUT_ENABLE();
+
+  return (tdo);
+}
+
+
+// JTAG functions with cJTAG frames: TMS and TDI are held for the next frame
+#undef  PIN_TMS_SET
+#undef  PIN_TMS_CLR
+#undef  JTAG_CYCLE_TCK
+#undef  JTAG_CYCLE_TDI
+#undef  JTAG_CYCLE_TDO
+#undef  JTAG_CYCLE_TDIO
+#define PIN_TMS_SET()             FrameTMS = 1U
+#define PIN_TMS_CLR()             FrameTMS = 0U
+#define PIN_TDI_OUT(bit)          FrameTDI = (bit) & 1U
+#define JTAG_CYCLE_TCK()                \
+  (void)CJTAG_FRAME(FrameTMS, FrameTDI)
+
+#define JTAG_CYCLE_TDI(tdi)             \
+  PIN_TDI_OUT(tdi);                     \
+  (void)CJTAG_FRAME(FrameTMS, FrameTDI)
+
+#define JTAG_CYCLE_TDO(tdo)             \
+  tdo = CJTAG_FRAME(FrameTMS, FrameTDI)
+
+#define JTAG_CYCLE_TDIO(tdi,tdo)        \
+  PIN_TDI_OUT(tdi);                     \
+  tdo = CJTAG_FRAME(FrameTMS, FrameTDI)
+
+#define CJTAG_FRAME OScan1_Frame
+JTAG_IR_Function(OScan1)
+JTAG_TransferFunction(OScan1)
+JTAG_SequenceFunction(OScan1)
+JTAG_ReadIDCodeFunction(OScan1)
+JTAG_WriteAbortFunction(OScan1)
+
+// TMS and TDI back to the pins
+#undef  PIN_TMS_SET
+#undef  PIN_TMS_CLR
+#undef  PIN_TDI_OUT
+#undef  JTAG_CYCLE_TCK
+#undef  JTAG_CYCLE_TDI
+#undef  JTAG_CYCLE_TDO
+#undef  JTAG_CYCLE_TDIO
+#undef  CJTAG_FRAME
+#define PIN_TMS_SET PIN_SWDIO_TMS_SET
+#define PIN_TMS_CLR PIN_SWDIO_TMS_CLR
+
+
+// Select JTAG Scan Format
+//   format: DAP_JTAG_FORMAT_xxx
+//   return: none
+void JTAG_Format (uint32_t format) {
+  if (format != DAP_Data.jtag_format) {
+    if (format == DAP_JTAG_FORMAT_JTAG) {
+      PORT_CJTAG_EXIT();
+    } else if (DAP_Data.jtag_format == DAP_JTAG_FORMAT_JTAG) {
+      PORT_CJTAG_ENTER();
+    }
+    DAP_Data.jtag_format = (uint8_t)format;
+  }
+  // Initial TMS and TDI
+  FrameTMS = 1U;
+  FrameTDI = 1U;
+  // Hold time after TCKC falling edge
+  CJTAG_QUARTER_DELAY();
+}
+
+
+// Generate SWJ Sequence on TMSC: TMSC changes while TCKC is low
+//   count:  sequence bit count
+//   data:   pointer to sequence bit data
+//   return: none
+void JTAG_SWJ_Sequence (uint32_t count, const uint8_t *data) {
+  uint32_t val;
+  uint32_t n;
+
+  val = 0U;
+  n = 0U;
+  while (count--) {
+    if (n == 0U) {
+      val = *data++;
+      n = 8U;
+    }
+    CJTAG_QUARTER_DELAY();
+    PIN_SWDIO_OUT(val & 1U);
+    CJTAG_QUARTER_DELAY();
+    PIN_TCK_SET();
+    PIN_DELAY();
+    PIN_TCK_CLR();
+    val >>= 1;
+    n--;
+  }
+  CJTAG_QUARTER_DELAY();
+}
+
+
+// Generate cJTAG Escape: TMSC edges while TCKC is high (IEEE 1149.7 clause 10)
+//   count:  number of TMSC edges
+//   level:  TMSC level before first edge
+//   return: none
+void JTAG_Escape (uint32_t count, uint32_t level) {
+  PIN_TCK_CLR();
+  CJTAG_QUARTER_DELAY();
+  level &= 1U;
+  PIN_SWDIO_OUT(level);
+  PIN_SWDIO_OUT_ENABLE();
+  CJTAG_QUARTER_DELAY();
+  PIN_TCK_SET();
+  // Edges and fall one TCKC period apart
+  while (count--) {
+    CJTAG_PERIOD_DELAY();
+    level ^= 1U;
+    PIN_SWDIO_OUT(level);
+  }
+  CJTAG_PERIOD_DELAY();
+  PIN_TCK_CLR();
+  CJTAG_QUARTER_DELAY();
+}
+
+#endif  /* (DAP_CJTAG != 0) */
+
+
 // Generate JTAG Sequence
 //   info:   sequence information
 //   tdi:    pointer to TDI generated data
 //   tdo:    pointer to TDO captured data
 //   return: none
 void JTAG_Sequence (uint32_t info, const uint8_t *tdi, uint8_t *tdo) {
+#if (DAP_CJTAG != 0)
+  if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
+    JTAG_SequenceOScan1(info, tdi, tdo);
+    return;
+  }
+#endif
   JTAG_SequenceSlow(info, tdi, tdo);
 }
 
@@ -364,6 +536,11 @@ void JTAG_Sequence (uint32_t info, const uint8_t *tdi, uint8_t *tdo) {
 // JTAG Read IDCODE register
 //   return: value read
 uint32_t JTAG_ReadIDCode (void) {
+#if (DAP_CJTAG != 0)
+  if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
+    return (JTAG_ReadIDCodeOScan1());
+  }
+#endif
   return (JTAG_ReadIDCodeSlow());
 }
 
@@ -372,6 +549,12 @@ uint32_t JTAG_ReadIDCode (void) {
 //   data:   value to write
 //   return: none
 void JTAG_WriteAbort (uint32_t data) {
+#if (DAP_CJTAG != 0)
+  if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
+    JTAG_WriteAbortOScan1(data);
+    return;
+  }
+#endif
   JTAG_WriteAbortSlow(data);
 }
 
@@ -380,6 +563,12 @@ void JTAG_WriteAbort (uint32_t data) {
 //   ir:     IR value
 //   return: none
 void JTAG_IR (uint32_t ir) {
+#if (DAP_CJTAG != 0)
+  if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
+    JTAG_IR_OScan1(ir);
+    return;
+  }
+#endif
   if (DAP_Data.fast_clock) {
     JTAG_IR_Fast(ir);
   } else {
@@ -393,6 +582,11 @@ void JTAG_IR (uint32_t ir) {
 //   data:    DATA[31:0]
 //   return:  ACK[2:0]
 uint8_t  JTAG_Transfer(uint32_t request, uint32_t *data) {
+#if (DAP_CJTAG != 0)
+  if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
+    return JTAG_TransferOScan1(request, data);
+  }
+#endif
   if (DAP_Data.fast_clock) {
     return JTAG_TransferFast(request, data);
   } else {

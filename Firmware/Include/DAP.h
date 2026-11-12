@@ -56,6 +56,8 @@
 #define ID_DAP_JTAG_Sequence            0x14U
 #define ID_DAP_JTAG_Configure           0x15U
 #define ID_DAP_JTAG_IDCODE              0x16U
+#define ID_DAP_JTAG_Format              0x24U
+#define ID_DAP_JTAG_Escape              0x25U
 #define ID_DAP_SWO_Transport            0x17U
 #define ID_DAP_SWO_Mode                 0x18U
 #define ID_DAP_SWO_Baudrate             0x19U
@@ -139,6 +141,10 @@
 #define DAP_PORT_DISABLED               0U      // Port Disabled (I/O pins in High-Z)
 #define DAP_PORT_SWD                    1U      // SWD Port (SWCLK, SWDIO) + nRESET
 #define DAP_PORT_JTAG                   2U      // JTAG Port (TCK, TMS, TDI, TDO, nTRST) + nRESET
+
+// DAP JTAG Scan Format
+#define DAP_JTAG_FORMAT_JTAG            0U      // Conventional JTAG (TCK, TMS, TDI, TDO)
+#define DAP_JTAG_FORMAT_OSCAN1          1U      // cJTAG OScan1 (TCKC, TMSC)
 
 // DAP SWJ Pins
 #define DAP_SWJ_SWCLK_TCK               0       // SWCLK/TCK
@@ -234,7 +240,8 @@
 typedef struct {
   uint8_t     debug_port;                       // Debug Port
   uint8_t     fast_clock;                       // Fast Clock Flag
-  uint8_t     padding[2];
+  uint8_t     jtag_format;                      // JTAG Scan Format
+  uint8_t     jtag_select;                      // JTAG Scan Format for the next JTAG connection
   uint32_t   clock_delay;                       // Clock Delay
   uint32_t     timestamp;                       // Last captured Timestamp
   struct {                                      // Transfer Configuration
@@ -281,6 +288,10 @@ extern uint32_t JTAG_ReadIDCode (void);
 extern void     JTAG_WriteAbort (uint32_t data);
 extern uint8_t  JTAG_Transfer   (uint32_t request, uint32_t *data);
 extern uint8_t  SWD_Transfer    (uint32_t request, uint32_t *data);
+
+extern void     JTAG_Format       (uint32_t format);
+extern void     JTAG_Escape       (uint32_t count, uint32_t level);
+extern void     JTAG_SWJ_Sequence (uint32_t count, const uint8_t *data);
 
 extern void     Delayms         (uint32_t delay);
 
