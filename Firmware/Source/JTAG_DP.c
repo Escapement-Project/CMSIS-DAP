@@ -75,37 +75,39 @@
 //   tdi:    pointer to TDI generated data
 //   tdo:    pointer to TDO captured data
 //   return: none
-void JTAG_Sequence (uint32_t info, const uint8_t *tdi, uint8_t *tdo) {
-  uint32_t i_val;
-  uint32_t o_val;
-  uint32_t bit;
-  uint32_t n, k;
-
-  n = info & JTAG_SEQUENCE_TCK;
-  if (n == 0U) {
-    n = 64U;
-  }
-
-  if (info & JTAG_SEQUENCE_TMS) {
-    PIN_TMS_SET();
-  } else {
-    PIN_TMS_CLR();
-  }
-
-  while (n) {
-    i_val = *tdi++;
-    o_val = 0U;
-    for (k = 8U; k && n; k--, n--) {
-      JTAG_CYCLE_TDIO(i_val, bit);
-      i_val >>= 1;
-      o_val >>= 1;
-      o_val  |= bit << 7;
-    }
-    o_val >>= k;
-    if (info & JTAG_SEQUENCE_TDO) {
-      *tdo++ = (uint8_t)o_val;
-    }
-  }
+#define JTAG_SequenceFunction(speed) /**/                                       \
+static void JTAG_Sequence##speed (uint32_t info, const uint8_t *tdi,            \
+                                  uint8_t *tdo) {                               \
+  uint32_t i_val;                                                               \
+  uint32_t o_val;                                                               \
+  uint32_t bit;                                                                 \
+  uint32_t n, k;                                                                \
+                                                                                \
+  n = info & JTAG_SEQUENCE_TCK;                                                 \
+  if (n == 0U) {                                                                \
+    n = 64U;                                                                    \
+  }                                                                             \
+                                                                                \
+  if (info & JTAG_SEQUENCE_TMS) {                                               \
+    PIN_TMS_SET();                                                              \
+  } else {                                                                      \
+    PIN_TMS_CLR();                                                              \
+  }                                                                             \
+                                                                                \
+  while (n) {                                                                   \
+    i_val = *tdi++;                                                             \
+    o_val = 0U;                                                                 \
+    for (k = 8U; k && n; k--, n--) {                                            \
+      JTAG_CYCLE_TDIO(i_val, bit);                                              \
+      i_val >>= 1;                                                              \
+      o_val >>= 1;                                                              \
+      o_val  |= bit << 7;                                                       \
+    }                                                                           \
+    o_val >>= k;                                                                \
+    if (info & JTAG_SEQUENCE_TDO) {                                             \
+      *tdo++ = (uint8_t)o_val;                                                  \
+    }                                                                           \
+  }                                                                             \
 }
 
 
@@ -264,36 +266,105 @@ JTAG_TransferFunction(Slow)
 
 // JTAG Read IDCODE register
 //   return: value read
+#define JTAG_ReadIDCodeFunction(speed) /**/                                     \
+static uint32_t JTAG_ReadIDCode##speed (void) {                                 \
+  uint32_t bit;                                                                 \
+  uint32_t val;                                                                 \
+  uint32_t n;                                                                   \
+                                                                                \
+  PIN_TMS_SET();                                                                \
+  JTAG_CYCLE_TCK();                         /* Select-DR-Scan */                \
+  PIN_TMS_CLR();                                                                \
+  JTAG_CYCLE_TCK();                         /* Capture-DR */                    \
+  JTAG_CYCLE_TCK();                         /* Shift-DR */                      \
+                                                                                \
+  for (n = DAP_Data.jtag_dev.index; n; n--) {                                   \
+    JTAG_CYCLE_TCK();                       /* Bypass before data */            \
+  }                                                                             \
+                                                                                \
+  val = 0U;                                                                     \
+  for (n = 31U; n; n--) {                                                       \
+    JTAG_CYCLE_TDO(bit);                    /* Get D0..D30 */                   \
+    val  |= bit << 31;                                                          \
+    val >>= 1;                                                                  \
+  }                                                                             \
+  PIN_TMS_SET();                                                                \
+  JTAG_CYCLE_TDO(bit);                      /* Get D31 & Exit1-DR */            \
+  val |= bit << 31;                                                             \
+                                                                                \
+  JTAG_CYCLE_TCK();                         /* Update-DR */                     \
+  PIN_TMS_CLR();                                                                \
+  JTAG_CYCLE_TCK();                         /* Idle */                          \
+                                                                                \
+  return (val);                                                                 \
+}
+
+
+// JTAG Write ABORT register
+//   data:   value to write
+//   return: none
+#define JTAG_WriteAbortFunction(speed) /**/                                     \
+static void JTAG_WriteAbort##speed (uint32_t data) {                            \
+  uint32_t n;                                                                   \
+                                                                                \
+  PIN_TMS_SET();                                                                \
+  JTAG_CYCLE_TCK();                         /* Select-DR-Scan */                \
+  PIN_TMS_CLR();                                                                \
+  JTAG_CYCLE_TCK();                         /* Capture-DR */                    \
+  JTAG_CYCLE_TCK();                         /* Shift-DR */                      \
+                                                                                \
+  for (n = DAP_Data.jtag_dev.index; n; n--) {                                   \
+    JTAG_CYCLE_TCK();                       /* Bypass before data */            \
+  }                                                                             \
+                                                                                \
+  PIN_TDI_OUT(0U);                                                              \
+  JTAG_CYCLE_TCK();                         /* Set RnW=0 (Write) */             \
+  JTAG_CYCLE_TCK();                         /* Set A2=0 */                      \
+  JTAG_CYCLE_TCK();                         /* Set A3=0 */                      \
+                                                                                \
+  for (n = 31U; n; n--) {                                                       \
+    JTAG_CYCLE_TDI(data);                   /* Set D0..D30 */                   \
+    data >>= 1;                                                                 \
+  }                                                                             \
+  n = DAP_Data.jtag_dev.count - DAP_Data.jtag_dev.index - 1U;                   \
+  if (n) {                                                                      \
+    JTAG_CYCLE_TDI(data);                   /* Set D31 */                       \
+    for (--n; n; n--) {                                                         \
+      JTAG_CYCLE_TCK();                     /* Bypass after data */             \
+    }                                                                           \
+    PIN_TMS_SET();                                                              \
+    JTAG_CYCLE_TCK();                       /* Bypass & Exit1-DR */             \
+  } else {                                                                      \
+    PIN_TMS_SET();                                                              \
+    JTAG_CYCLE_TDI(data);                   /* Set D31 & Exit1-DR */            \
+  }                                                                             \
+                                                                                \
+  JTAG_CYCLE_TCK();                         /* Update-DR */                     \
+  PIN_TMS_CLR();                                                                \
+  JTAG_CYCLE_TCK();                         /* Idle */                          \
+  PIN_TDI_OUT(1U);                                                              \
+}
+
+
+JTAG_SequenceFunction(Slow)
+JTAG_ReadIDCodeFunction(Slow)
+JTAG_WriteAbortFunction(Slow)
+
+
+// Generate JTAG Sequence
+//   info:   sequence information
+//   tdi:    pointer to TDI generated data
+//   tdo:    pointer to TDO captured data
+//   return: none
+void JTAG_Sequence (uint32_t info, const uint8_t *tdi, uint8_t *tdo) {
+  JTAG_SequenceSlow(info, tdi, tdo);
+}
+
+
+// JTAG Read IDCODE register
+//   return: value read
 uint32_t JTAG_ReadIDCode (void) {
-  uint32_t bit;
-  uint32_t val;
-  uint32_t n;
-
-  PIN_TMS_SET();
-  JTAG_CYCLE_TCK();                         /* Select-DR-Scan */
-  PIN_TMS_CLR();
-  JTAG_CYCLE_TCK();                         /* Capture-DR */
-  JTAG_CYCLE_TCK();                         /* Shift-DR */
-
-  for (n = DAP_Data.jtag_dev.index; n; n--) {
-    JTAG_CYCLE_TCK();                       /* Bypass before data */
-  }
-
-  val = 0U;
-  for (n = 31U; n; n--) {
-    JTAG_CYCLE_TDO(bit);                    /* Get D0..D30 */
-    val  |= bit << 31;
-    val >>= 1;
-  }
-  PIN_TMS_SET();
-  JTAG_CYCLE_TDO(bit);                      /* Get D31 & Exit1-DR */
-  val |= bit << 31;
-
-  JTAG_CYCLE_TCK();                         /* Update-DR */
-  PIN_TMS_CLR();
-  JTAG_CYCLE_TCK();                         /* Idle */
-
-  return (val);
+  return (JTAG_ReadIDCodeSlow());
 }
 
 
@@ -301,44 +372,7 @@ uint32_t JTAG_ReadIDCode (void) {
 //   data:   value to write
 //   return: none
 void JTAG_WriteAbort (uint32_t data) {
-  uint32_t n;
-
-  PIN_TMS_SET();
-  JTAG_CYCLE_TCK();                         /* Select-DR-Scan */
-  PIN_TMS_CLR();
-  JTAG_CYCLE_TCK();                         /* Capture-DR */
-  JTAG_CYCLE_TCK();                         /* Shift-DR */
-
-  for (n = DAP_Data.jtag_dev.index; n; n--) {
-    JTAG_CYCLE_TCK();                       /* Bypass before data */
-  }
-
-  PIN_TDI_OUT(0U);
-  JTAG_CYCLE_TCK();                         /* Set RnW=0 (Write) */
-  JTAG_CYCLE_TCK();                         /* Set A2=0 */
-  JTAG_CYCLE_TCK();                         /* Set A3=0 */
-
-  for (n = 31U; n; n--) {
-    JTAG_CYCLE_TDI(data);                   /* Set D0..D30 */
-    data >>= 1;
-  }
-  n = DAP_Data.jtag_dev.count - DAP_Data.jtag_dev.index - 1U;
-  if (n) {
-    JTAG_CYCLE_TDI(data);                   /* Set D31 */
-    for (--n; n; n--) {
-      JTAG_CYCLE_TCK();                     /* Bypass after data */
-    }
-    PIN_TMS_SET();
-    JTAG_CYCLE_TCK();                       /* Bypass & Exit1-DR */
-  } else {
-    PIN_TMS_SET();
-    JTAG_CYCLE_TDI(data);                   /* Set D31 & Exit1-DR */
-  }
-
-  JTAG_CYCLE_TCK();                         /* Update-DR */
-  PIN_TMS_CLR();
-  JTAG_CYCLE_TCK();                         /* Idle */
-  PIN_TDI_OUT(1U);
+  JTAG_WriteAbortSlow(data);
 }
 
 
