@@ -154,6 +154,10 @@ The JTAG Commands allow to:
  - Detect the devices connect to the JTAG chain.
  - Configure the IR register length of each device on the JTAG chain.
  - Read the JTAG IDCODE value of each device on the JTAG chain.
+ - Select a cJTAG (IEEE 1149.7) scan format for the JTAG connection, and generate cJTAG escapes.
+
+\note
+The \ref DAP_JTAG_Format and \ref DAP_JTAG_Escape commands are only available when \ref DAP_Info with ID=0xF0 (Capabilities) returns in \b Info1 - Bit 1: <b>1 = cJTAG</b>.
 */
 
 /**************************************************************************************************/
@@ -403,6 +407,9 @@ UART Communication Port support:
 UART Communication via USB COM Port support:
  - Info1 - Bit 0: <b>1 = USB COM Port</b> is implemented (0 = not implemented).
 
+cJTAG support:
+ - Info1 - Bit 1: <b>1 = cJTAG</b> - IEEE 1149.7 scan formats on the JTAG port, with \ref DAP_JTAG_Format and \ref DAP_JTAG_Escape, are implemented (0 = not implemented).
+
 <hr>
 
 <b>DAP_Info Response (for ID=0xF1):</b>
@@ -476,6 +483,11 @@ connection to the Target Device.
   - 1 = SWD mode: connect with Serial Wire Debug mode.
   - 2 = JTAG mode: connect with 4/5-pin JTAG mode.
 
+A DAP_Connect that brings up JTAG mode (Port 2, or Port 0 where JTAG is the default) starts in the cJTAG scan
+format selected with \ref DAP_JTAG_Format while disconnected, without a TCKC period. It then calls
+\ref PORT_CJTAG_SETUP instead of \ref PORT_JTAG_SETUP, with no conventional JTAG on the pins first. Without a
+selection it starts in conventional JTAG. Every accepted DAP_Connect consumes the selection.
+
 
 <b>DAP_Connect Response:</b>
 \code
@@ -498,6 +510,7 @@ connection to the Target Device.
 \brief Disconnect from active Debug Port
 \details
 The <b>DAP_Disconnect Command</b> de-initializes the DAP I/O pins by calling the function \ref PORT_OFF.
+It also ends a cJTAG scan format, and clears one selected with \ref DAP_JTAG_Format while disconnected.
 
 <b>DAP_Disconnect Command</b>:
 \code
@@ -698,6 +711,9 @@ SWD/JTAG Reset, SWD<->JTAG switch and Dormant operation.
 
 - <b>Sequence Bit Count</b>: Number of bits in sequence: 1..256 (256 encoded as 0)
 - <b>Sequence Bit Data</b>:  Sequence generated on SWDIO/TMS (with clock \@SWCLK/TCK) LSB is transmitted  first
+
+With a cJTAG scan format selected (\ref DAP_JTAG_Format), the sequence is generated on TMSC: one bit
+per TCKC period, TMSC changed only while TCKC is low, and TCKC left low at the end.
 
 
 <b>DAP_SWJ_Sequence Response</b>:
@@ -1142,6 +1158,117 @@ The <b>DAP_JTAG_IDCODE Command</b> request the JTAG IDCODE for the selected devi
 
 - <b>ID Code</b>: 32-bit JTAG ID Code of the device.
 - \b Status: \ref DAP_Response_Status
+*/
+
+
+/**************************************************************************************************/
+/**
+\defgroup DAP_JTAG_Format DAP_JTAG_Format
+\ingroup DAP_jtag_gr
+\brief Select the scan format of the JTAG connection
+\details
+The <b>DAP_JTAG_Format Command</b> selects how the JTAG connection reaches the target: as conventional
+JTAG, or as a cJTAG (IEEE 1149.7) scan format on TCKC (SWCLK/TCK) and TMSC (SWDIO/TMS).
+
+While disconnected, it selects the format the next \ref DAP_Connect with JTAG mode starts in, and changes no
+pin. On a JTAG connection, it changes the format of the live connection at once and generates no TCKC period.
+Into a cJTAG format, TCKC goes low and TDI is released. Back to conventional JTAG, TDI is driven again.
+
+TCKC rests low between commands, and TMSC changes only while TCKC is low, in frames and in raw output,
+apart from an escape's edges. Taking TCKC to or from its rest level can still make one edge, for example where
+the target pulls an undriven TCKC up. The reset escape that starts each activation covers the stray bit.
+
+The probe stops driving TMSC by the TCKC rise of the bit before each bit the target drives. It may drive TMSC again
+from the fall that ends the target's bit (IEEE 1149.7, 14.2.3). While it does not drive TMSC, a probe may still
+bias it with a keeper or pull-up.
+
+With a cJTAG scan format selected, \ref DAP_JTAG_Sequence, \ref DAP_jtag_idcode, \ref DAP_Transfer,
+\ref DAP_TransferBlock and \ref DAP_WriteABORT are framed in that format, and \ref DAP_SWJ_Sequence generates its
+sequence on TMSC. Bringing the target into the format, with escapes and the selection sequence the standard
+defines, is done by the debugger, with \ref DAP_JTAG_Escape and \ref DAP_SWJ_Sequence. The framed commands must
+wait until the target is in the format. The frames assume that the probe supplies TCKC, that the target adds no
+delay elements (DLYC 0, IEEE 1149.7 clause 25), and that Transport Packets are disabled. The target can sample TMSC
+on either TCKC edge (SREDGE 0 or 1). DAP_JTAG_Format leaves the chain set with \ref DAP_JTAG_Configure unchanged. A
+debugger must set it again when its target selection changes the visible chain. \ref DAP_SWD_Sequence and
+\ref DAP_SWJ_Pins keep their behavior; using them in a cJTAG scan format is the debugger's responsibility.
+
+\note A debugger starts with \ref DAP_Disconnect. On a connection a failed debugger left open, DAP_JTAG_Format
+would change that connection, and the \ref DAP_Connect after it would start in conventional JTAG. Where
+\ref DAP_Info reports Atomic Commands (Info0 - Bit 4), a debugger should send DAP_Disconnect, DAP_JTAG_Format
+and DAP_Connect together in one \ref DAP_ExecuteCommands_gr.
+
+<b>DAP_JTAG_Format Command</b>:
+\code
+| BYTE | BYTE **|
+> 0x24 | Format |
+|******|********|
+\endcode
+
+- \b Format: Scan format of the JTAG connection:
+  - 0 = Conventional JTAG.
+  - 1 = OScan1.
+  - Other values are reserved.
+
+OScan1 is implemented whenever \ref DAP_Info reports cJTAG (Info1 - Bit 1).
+
+<b>DAP_JTAG_Format Response</b>:
+\code
+| BYTE | BYTE **|
+< 0x24 | Status |
+|******|********|
+\endcode
+
+- \b Status: \ref DAP_Response_Status. DAP_ERROR on an SWD connection, or when the format is not
+  implemented. The format and the selection are then unchanged. Format 0 is always accepted except on an SWD
+  connection. DAP_OK does not mean that the target is in the format.
+*/
+
+
+/**************************************************************************************************/
+/**
+\defgroup DAP_JTAG_Escape DAP_JTAG_Escape
+\ingroup DAP_jtag_gr
+\brief Generate a cJTAG escape on TMSC
+\details
+The <b>DAP_JTAG_Escape Command</b> generates a cJTAG escape (IEEE 1149.7, clause 10): TMSC edges while
+TCKC is high. TCKC goes low and TMSC goes to \b Level. TCKC then rises, TMSC changes \b Edge \b Count times,
+and TCKC falls and stays low. The edges and the fall are each one TCKC period after the one before, at the
+clock set with \ref DAP_SWJ_Clock. This meets IEEE 1149.7, 10.4.2 c) whenever that clock is within the target's
+rating. The number of edges selects the kind of escape (IEEE 1149.7, 10.4.2 g):
+ - 2 or 3: custom, depending on the context.
+ - 4 or 5: deselection.
+ - 6 or 7: selection.
+ - 8 to 255: reset.
+
+For an even \b Edge \b Count, the target counts the escape's TCKC period as a bit with value \b Level, the TMSC
+value before the fall (IEEE 1149.7, 10.4.2 h). An odd count leaves the opposite value before the fall and can read
+differently depending on the target's sampling edge and its escape detector, so a debugger should send even counts.
+
+TCKC is high for about \b Edge \b Count + 1 periods. For a TAP.7 with power control, a debugger should pick the
+count and the clock to keep that under 1 ms, after which the TAP.7 may power down (IEEE 1149.7, 18.10).
+
+The command is accepted on a JTAG connection in any scan format, conventional JTAG included. In conventional
+JTAG, where TCK rests high, it lowers TCK first and leaves it low.
+
+<b>DAP_JTAG_Escape Command</b>:
+\code
+| BYTE | BYTE ******| BYTE *|
+> 0x25 | Edge Count | Level |
+|******|************|*******|
+\endcode
+
+- <b>Edge Count</b>: Number of TMSC edges while TCKC is high: 2 .. 255 (even counts recommended).
+- \b Level: TMSC level before the first edge: 0 or 1.
+
+<b>DAP_JTAG_Escape Response</b>:
+\code
+| BYTE | BYTE **|
+< 0x25 | Status |
+|******|********|
+\endcode
+
+- \b Status: \ref DAP_Response_Status. DAP_ERROR when no JTAG connection is active, \b Edge \b Count is
+  below 2, or \b Level is above 1. DAP_OK means the escape was sent, not that the target acted on it.
 */
 
 
