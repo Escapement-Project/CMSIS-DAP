@@ -449,6 +449,7 @@ static uint32_t OScan_Frame (uint32_t tms, uint32_t tdi) {
   uint32_t format;
   uint32_t state;
   uint32_t shift;
+  uint32_t tdo;
 
   format = DAP_Data.jtag_format;
   state  = TapState;
@@ -466,7 +467,40 @@ static uint32_t OScan_Frame (uint32_t tms, uint32_t tdi) {
     PIN_TCK_CLR();
     return (1U);
   }
-  return (OScan1_Frame(tms, tdi));
+  if ((shift == 0U) || (format != DAP_JTAG_FORMAT_OSCAN5)) {
+    return (OScan1_Frame(tms, tdi));
+  }
+
+  // nTDI packet, with TMS=1 as EOT escape (two TMSC edges while TCKC is high)
+  PIN_SWDIO_OUT((tdi & 1U) ^ 1U);
+  PIN_DELAY();
+  if (((tms & 1U) == 0U)) {
+    PIN_SWDIO_OUT_DISABLE();                // Release TMSC (14.2.3)
+  }
+  PIN_TCK_SET();
+  if ((tms & 1U) != 0U) {
+    // EOT escape: edges and fall at least one TCKC period apart
+    CJTAG_PERIOD_DELAY();
+    PIN_SWDIO_OUT(tdi & 1U);
+    CJTAG_PERIOD_DELAY();
+    PIN_SWDIO_OUT((tdi & 1U) ^ 1U);
+    CJTAG_QUARTER_DELAY();
+    PIN_SWDIO_OUT_DISABLE();                // Release TMSC (14.2.3)
+    CJTAG_PERIOD_DELAY();
+  } else {
+    PIN_DELAY();
+  }
+
+  // TDO packet
+  PIN_TCK_CLR();
+  PIN_DELAY();
+  tdo = PIN_SWDIO_IN();
+  PIN_TCK_SET();
+  PIN_DELAY();
+  PIN_TCK_CLR();
+  PIN_SWDIO_OUT_ENABLE();
+
+  return (tdo);
 }
 
 

@@ -1178,9 +1178,10 @@ TCKC rests low between commands, and TMSC changes only while TCKC is low, in fra
 apart from an escape's edges. Taking TCKC to or from its rest level can still make one edge, for example where
 the target pulls an undriven TCKC up. The reset escape that starts each activation covers the stray bit.
 
-The probe stops driving TMSC by the TCKC rise of the bit before each bit the target drives. It may drive TMSC again
-from the fall that ends the target's bit (IEEE 1149.7, 14.2.3). While it does not drive TMSC, a probe may still
-bias it with a keeper or pull-up.
+The probe stops driving TMSC by the TCKC rise of the bit before each bit the target drives. If that preceding bit
+ends with an escape's edges, the probe stops before its fall instead. It may drive TMSC again from the fall that
+ends the target's bit (IEEE 1149.7, 14.2.3). While it does not drive TMSC, a probe may still bias it with a keeper
+or pull-up.
 
 With a cJTAG scan format selected, \ref DAP_JTAG_Sequence, \ref DAP_jtag_idcode, \ref DAP_Transfer,
 \ref DAP_TransferBlock and \ref DAP_WriteABORT are framed in that format, and \ref DAP_SWJ_Sequence generates its
@@ -1208,18 +1209,20 @@ and DAP_Connect together in one \ref DAP_ExecuteCommands_gr.
   - 0 = Conventional JTAG.
   - 1 = OScan1.
   - 2 = OScan2 (optional).
+  - 5 = OScan5 (optional).
   - Other values are reserved.
 
 OScan1 is implemented whenever \ref DAP_Info reports cJTAG (Info1 - Bit 1). A debugger finds the optional formats by
 selecting each after \ref DAP_Disconnect, where DAP_ERROR means the format is not implemented. It then selects
 Format 0, or the format it connects in next.
 
-In OScan2 a frame's shape depends on the TAP state: the probe tracks the state from the logical TMS of the framed
-commands, and assumes Run-Test/Idle when the format takes effect. Only the framed commands move the tracked state.
-After \ref DAP_SWJ_Sequence, \ref DAP_JTAG_Escape, \ref DAP_SWD_Sequence or \ref DAP_SWJ_Pins moves the target's TAP,
-as the activation does, a debugger must send the same Format again with the TAP in Run-Test/Idle. The frame before a
-Check Packet does not move the target's TAP (IEEE 1149.7, 25.6.2 b), so a debugger should send it with TMS low in
-Run-Test/Idle, where the tracked state cannot diverge. A TDO bit captured in a frame without a TDO slot reads 1.
+In OScan2 and OScan5 a frame's shape depends on the TAP state: the probe tracks the state from the logical TMS of the
+framed commands, and assumes Run-Test/Idle when the format takes effect. Only the framed commands move the tracked
+state. After \ref DAP_SWJ_Sequence, \ref DAP_JTAG_Escape, \ref DAP_SWD_Sequence or \ref DAP_SWJ_Pins moves the
+target's TAP, as the activation does, a debugger must send the same Format again with the TAP in Run-Test/Idle. The
+frame before a Check Packet does not move the target's TAP (IEEE 1149.7, 25.6.2 b), so a debugger should send it with
+TMS low in Run-Test/Idle, where the tracked state cannot diverge. A TDO bit captured in a frame without a TDO slot
+reads 1.
 
 In OScan2 the last frame outside Shift-DR and Shift-IR moves the target's TAP only at the next TCKC rise
 (IEEE 1149.7, 25.6.1). DAP_JTAG_Format, \ref DAP_Connect and \ref DAP_Disconnect send no TCKC period of their
