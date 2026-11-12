@@ -1207,9 +1207,24 @@ and DAP_Connect together in one \ref DAP_ExecuteCommands_gr.
 - \b Format: Scan format of the JTAG connection:
   - 0 = Conventional JTAG.
   - 1 = OScan1.
+  - 2 = OScan2 (optional).
   - Other values are reserved.
 
-OScan1 is implemented whenever \ref DAP_Info reports cJTAG (Info1 - Bit 1).
+OScan1 is implemented whenever \ref DAP_Info reports cJTAG (Info1 - Bit 1). A debugger finds the optional formats by
+selecting each after \ref DAP_Disconnect, where DAP_ERROR means the format is not implemented. It then selects
+Format 0, or the format it connects in next.
+
+In OScan2 a frame's shape depends on the TAP state: the probe tracks the state from the logical TMS of the framed
+commands, and assumes Run-Test/Idle when the format takes effect. Only the framed commands move the tracked state.
+After \ref DAP_SWJ_Sequence, \ref DAP_JTAG_Escape, \ref DAP_SWD_Sequence or \ref DAP_SWJ_Pins moves the target's TAP,
+as the activation does, a debugger must send the same Format again with the TAP in Run-Test/Idle. The frame before a
+Check Packet does not move the target's TAP (IEEE 1149.7, 25.6.2 b), so a debugger should send it with TMS low in
+Run-Test/Idle, where the tracked state cannot diverge. A TDO bit captured in a frame without a TDO slot reads 1.
+
+In OScan2 the last frame outside Shift-DR and Shift-IR moves the target's TAP only at the next TCKC rise
+(IEEE 1149.7, 25.6.1). DAP_JTAG_Format, \ref DAP_Connect and \ref DAP_Disconnect send no TCKC period of their
+own, so before Format 0, DAP_Connect or DAP_Disconnect, a debugger clocks one more frame that leaves the TAP
+where it is.
 
 <b>DAP_JTAG_Format Response</b>:
 \code

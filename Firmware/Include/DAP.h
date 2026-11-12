@@ -145,6 +145,7 @@
 // DAP JTAG Scan Format
 #define DAP_JTAG_FORMAT_JTAG            0U      // Conventional JTAG (TCK, TMS, TDI, TDO)
 #define DAP_JTAG_FORMAT_OSCAN1          1U      // cJTAG OScan1 (TCKC, TMSC)
+#define DAP_JTAG_FORMAT_OSCAN2          2U      // cJTAG OScan2
 
 // DAP SWJ Pins
 #define DAP_SWJ_SWCLK_TCK               0       // SWCLK/TCK

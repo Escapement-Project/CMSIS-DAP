@@ -399,6 +399,77 @@ static uint32_t OScan1_Frame (uint32_t tms, uint32_t tdi) {
 }
 
 
+// TAP Controller States (IEEE 1149.1)
+#define CJTAG_TAP_RESET       0U
+#define CJTAG_TAP_IDLE        1U
+#define CJTAG_TAP_SELECT_DR   2U
+#define CJTAG_TAP_CAPTURE_DR  3U
+#define CJTAG_TAP_SHIFT_DR    4U
+#define CJTAG_TAP_EXIT1_DR    5U
+#define CJTAG_TAP_PAUSE_DR    6U
+#define CJTAG_TAP_EXIT2_DR    7U
+#define CJTAG_TAP_UPDATE_DR   8U
+#define CJTAG_TAP_SELECT_IR   9U
+#define CJTAG_TAP_CAPTURE_IR 10U
+#define CJTAG_TAP_SHIFT_IR   11U
+#define CJTAG_TAP_EXIT1_IR   12U
+#define CJTAG_TAP_PAUSE_IR   13U
+#define CJTAG_TAP_EXIT2_IR   14U
+#define CJTAG_TAP_UPDATE_IR  15U
+
+// TAP Controller Next State for TMS=0 and TMS=1
+static const uint8_t TapNext[16][2] = {
+  { CJTAG_TAP_IDLE,       CJTAG_TAP_RESET      },  // Test-Logic-Reset
+  { CJTAG_TAP_IDLE,       CJTAG_TAP_SELECT_DR  },  // Run-Test/Idle
+  { CJTAG_TAP_CAPTURE_DR, CJTAG_TAP_SELECT_IR  },  // Select-DR-Scan
+  { CJTAG_TAP_SHIFT_DR,   CJTAG_TAP_EXIT1_DR   },  // Capture-DR
+  { CJTAG_TAP_SHIFT_DR,   CJTAG_TAP_EXIT1_DR   },  // Shift-DR
+  { CJTAG_TAP_PAUSE_DR,   CJTAG_TAP_UPDATE_DR  },  // Exit1-DR
+  { CJTAG_TAP_PAUSE_DR,   CJTAG_TAP_EXIT2_DR   },  // Pause-DR
+  { CJTAG_TAP_SHIFT_DR,   CJTAG_TAP_UPDATE_DR  },  // Exit2-DR
+  { CJTAG_TAP_IDLE,       CJTAG_TAP_SELECT_DR  },  // Update-DR
+  { CJTAG_TAP_CAPTURE_IR, CJTAG_TAP_RESET      },  // Select-IR-Scan
+  { CJTAG_TAP_SHIFT_IR,   CJTAG_TAP_EXIT1_IR   },  // Capture-IR
+  { CJTAG_TAP_SHIFT_IR,   CJTAG_TAP_EXIT1_IR   },  // Shift-IR
+  { CJTAG_TAP_PAUSE_IR,   CJTAG_TAP_UPDATE_IR  },  // Exit1-IR
+  { CJTAG_TAP_PAUSE_IR,   CJTAG_TAP_EXIT2_IR   },  // Pause-IR
+  { CJTAG_TAP_SHIFT_IR,   CJTAG_TAP_UPDATE_IR  },  // Exit2-IR
+  { CJTAG_TAP_IDLE,       CJTAG_TAP_SELECT_DR  },  // Update-IR
+};
+
+// TAP State
+static uint8_t  TapState = CJTAG_TAP_IDLE;  /* TAP state after frames sent */
+
+
+// Generate cJTAG Frame at slow clock (packets set by scan format and TAP state)
+//   tms:    TMS value
+//   tdi:    TDI value
+//   return: TDO value (1 for frame without TDO packet)
+static uint32_t OScan_Frame (uint32_t tms, uint32_t tdi) {
+  uint32_t format;
+  uint32_t state;
+  uint32_t shift;
+
+  format = DAP_Data.jtag_format;
+  state  = TapState;
+  shift  = (state == CJTAG_TAP_SHIFT_DR) || (state == CJTAG_TAP_SHIFT_IR);
+  TapState = TapNext[state][tms & 1U];
+
+  // Hold time after previous frame
+  CJTAG_QUARTER_DELAY();
+  if ((shift == 0U) && (format == DAP_JTAG_FORMAT_OSCAN2)) {
+    // TMS packet
+    PIN_SWDIO_OUT(tms & 1U);
+    CJTAG_QUARTER_DELAY();
+    PIN_TCK_SET();
+    PIN_DELAY();
+    PIN_TCK_CLR();
+    return (1U);
+  }
+  return (OScan1_Frame(tms, tdi));
+}
+
+
 // JTAG functions with cJTAG frames: TMS and TDI are held for the next frame
 #undef  PIN_TMS_SET
 #undef  PIN_TMS_CLR
@@ -423,12 +494,12 @@ static uint32_t OScan1_Frame (uint32_t tms, uint32_t tdi) {
   PIN_TDI_OUT(tdi);                     \
   tdo = CJTAG_FRAME(FrameTMS, FrameTDI)
 
-#define CJTAG_FRAME OScan1_Frame
-JTAG_IR_Function(OScan1)
-JTAG_TransferFunction(OScan1)
-JTAG_SequenceFunction(OScan1)
-JTAG_ReadIDCodeFunction(OScan1)
-JTAG_WriteAbortFunction(OScan1)
+#define CJTAG_FRAME OScan_Frame
+JTAG_IR_Function(OScan)
+JTAG_TransferFunction(OScan)
+JTAG_SequenceFunction(OScan)
+JTAG_ReadIDCodeFunction(OScan)
+JTAG_WriteAbortFunction(OScan)
 
 // TMS and TDI back to the pins
 #undef  PIN_TMS_SET
@@ -455,11 +526,10 @@ void JTAG_Format (uint32_t format) {
     }
     DAP_Data.jtag_format = (uint8_t)format;
   }
-  // Initial TMS and TDI
+  // Initial TMS, TDI and TAP state
   FrameTMS = 1U;
   FrameTDI = 1U;
-  // Hold time after TCKC falling edge
-  CJTAG_QUARTER_DELAY();
+  TapState = CJTAG_TAP_IDLE;
 }
 
 
@@ -525,7 +595,7 @@ void JTAG_Escape (uint32_t count, uint32_t level) {
 void JTAG_Sequence (uint32_t info, const uint8_t *tdi, uint8_t *tdo) {
 #if (DAP_CJTAG != 0)
   if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
-    JTAG_SequenceOScan1(info, tdi, tdo);
+    JTAG_SequenceOScan(info, tdi, tdo);
     return;
   }
 #endif
@@ -538,7 +608,7 @@ void JTAG_Sequence (uint32_t info, const uint8_t *tdi, uint8_t *tdo) {
 uint32_t JTAG_ReadIDCode (void) {
 #if (DAP_CJTAG != 0)
   if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
-    return (JTAG_ReadIDCodeOScan1());
+    return (JTAG_ReadIDCodeOScan());
   }
 #endif
   return (JTAG_ReadIDCodeSlow());
@@ -551,7 +621,7 @@ uint32_t JTAG_ReadIDCode (void) {
 void JTAG_WriteAbort (uint32_t data) {
 #if (DAP_CJTAG != 0)
   if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
-    JTAG_WriteAbortOScan1(data);
+    JTAG_WriteAbortOScan(data);
     return;
   }
 #endif
@@ -565,7 +635,7 @@ void JTAG_WriteAbort (uint32_t data) {
 void JTAG_IR (uint32_t ir) {
 #if (DAP_CJTAG != 0)
   if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
-    JTAG_IR_OScan1(ir);
+    JTAG_IR_OScan(ir);
     return;
   }
 #endif
@@ -584,7 +654,7 @@ void JTAG_IR (uint32_t ir) {
 uint8_t  JTAG_Transfer(uint32_t request, uint32_t *data) {
 #if (DAP_CJTAG != 0)
   if (DAP_Data.jtag_format != DAP_JTAG_FORMAT_JTAG) {
-    return JTAG_TransferOScan1(request, data);
+    return JTAG_TransferOScan(request, data);
   }
 #endif
   if (DAP_Data.fast_clock) {
